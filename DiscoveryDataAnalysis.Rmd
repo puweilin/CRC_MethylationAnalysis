@@ -1,0 +1,299 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#Including the packages and plot formats for the analysis
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+library(knitr)
+library(ggsci)
+library(ggplot2)
+library(ggthemes)
+library(readxl)
+library(reshape2)
+library(readr)
+library(dplyr)
+library(ggbeeswarm)
+library(gridExtra)
+library(tidyverse)
+library(tidyr)
+library(RColorBrewer)
+library(FactoMineR)
+library(stringi)
+annotation = read_tsv("d:/MyInfo/My_Code/R function//Methylation_Analysis_Pipeline/HM450KAnnotation.txt")
+annotation = arrange(annotation, annotation$CHR, annotation$MAPINFO)
+q =  theme_pander() + 
+  theme(panel.border = element_blank(),
+        axis.line.x = element_line(size = 0.5, linetype = "solid", colour = "black"),
+        axis.line.y = element_line(size = 0.5, linetype = "solid", colour = "black"))+
+  theme(legend.position=c(0.1,0.90))+
+  theme(legend.title = element_blank())+
+  theme(legend.text = element_text(colour="black", size = 16, face = "bold"))+
+  theme(axis.text.x=element_text(size=10))+
+  theme(axis.title.x=element_text(size=15))+
+  theme(axis.text.y=element_text(size=10))+
+  theme(axis.title.y=element_text(size=15))+
+  theme(plot.title = element_text(hjust = 0.5, vjust=0))
+
+```
+
+
+## The methylation status of the 5 genomic regions in discovery stage
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+#N = 268
+control.idx = which(Anno$Subtype == "Control")
+#N = 1104
+case.idx = which(Anno$Subtype != "Control" & Anno$Subtype != "Adenoma" )
+
+new_CRC = CRC
+colnames(new_CRC)[control.idx +1] = paste("N", colnames(new_CRC)[control.idx +1], sep ="-")
+colnames(new_CRC)[case.idx +1] = paste("T", colnames(new_CRC)[case.idx +1], sep ="-")
+new_CRC = new_CRC[,c(1, control.idx + 1, case.idx + 1)]
+
+Accepted_Regions_PhaseIII = read_csv("Accepted_Regions_PhaseIII.csv")
+Accepted_Regions_PhaseIII = Accepted_Regions_PhaseIII[c(1:3, 5:6),]
+
+Cgsites = c()
+Gene = c()
+for(i in 1:dim(Accepted_Regions_PhaseIII)[1]){
+  Cgsites = append(Cgsites, strsplit(Accepted_Regions_PhaseIII$Cgsites_In_Regions[i], ";")[[1]])
+  Gene = append(Gene, rep(Accepted_Regions_PhaseIII$Gene[i], 6))
+}
+Chr = annotation$CHR[match(Cgsites, annotation$ID)]
+Pos = annotation$MAPINFO[match(Cgsites, annotation$ID)]
+new_CRC = new_CRC[match(Cgsites, new_CRC$ID_REF),]
+new_CRC= cbind(Gene, Chr, Pos, new_CRC[,-1])
+
+MethylationStatus(new_CRC, Selected.Genes = My.Genes, output_name = "Discovery_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+
+```
+
+
+## The methylation status of the 5 genomic regions in the TCGA datasets of discovery stage
+
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+TCGA_CRC = new_CRC[,c(1:3, grep("TCGA", colnames(new_CRC)))]
+MethylationStatus(TCGA_CRC, Selected.Genes = My.Genes, output_name = "TCGA_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+
+
+## The methylation status of the 5 genomic regions in the KRASmut/wld TCGA datasets of discovery stage
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+TCGA_KRAS_status = read_excel("TCGA_KRAS.xlsx")
+
+KRAS_mut.id = TCGA_KRAS_status$COMMON[which(TCGA_KRAS_status$KRAS != "NaN")]
+KRAS_wld.id = TCGA_KRAS_status$COMMON[which(TCGA_KRAS_status$KRAS == "NaN")]
+
+#KRAs_mut.case.id
+Revised.KRAS_mut.caseid = sapply(KRAS_mut.id, function(x) paste("T-", paste(strsplit(x, "-")[[1]],collapse = "."), "A", sep = ""))
+
+#KRAs_mut.control.id
+Revised.KRAS_mut.controlid = sapply(Revised.KRAS_mut.caseid, function(x) paste("N-TCGA",paste(strsplit(x, "[.]")[[1]][2:3], collapse = "."), "11A", sep="."))
+
+
+#KRAs_wld.case.id
+Revised.KRAS_wld.caseid = sapply(KRAS_wld.id, function(x) paste("T-", paste(strsplit(x, "-")[[1]],collapse = "."), "A", sep = ""))
+
+#KRAs_wld.control.id
+Revised.KRAS_wld.controlid = sapply(Revised.KRAS_wld.caseid, function(x) paste("N-TCGA",paste(strsplit(x, "[.]")[[1]][2:3], collapse = "."), "11A", sep="."))
+
+Revised.KRAS_mut.id = c(Revised.KRAS_mut.caseid, Revised.KRAS_mut.controlid)
+Revised.KRAS_wld.id = c(Revised.KRAS_wld.caseid, Revised.KRAS_wld.controlid)
+
+TCGA_CRC_KRASmut = cbind(TCGA_CRC[,1:3], TCGA_CRC[, which(colnames(TCGA_CRC) %in% Revised.KRAS_mut.id)])
+TCGA_CRC_KRASwld = cbind(TCGA_CRC[,1:3], TCGA_CRC[, which(colnames(TCGA_CRC) %in% Revised.KRAS_wld.id)])
+
+MethylationStatus(TCGA_CRC_KRASmut, Selected.Genes = My.Genes, output_name = "TCGA_KRASmut_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+MethylationStatus(TCGA_CRC_KRASwld, Selected.Genes = My.Genes, output_name = "TCGA_KRASwld_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+
+
+## The Methylation Curve of the 5 candidate regions in the discovery stage 
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+q =    theme_classic() +
+  theme(axis.line.y = element_line(size = 0.8,color = "black"))+ 
+  theme(axis.line.x = element_line(size = 0.8,color = "black"))+
+  
+  theme(axis.text.x=element_text(size = 12, face ="bold"))+ 
+  theme(axis.title.x = element_text(size = 20, face = "bold"))+
+  
+  theme(axis.text.y=element_text(size = 18, face ="bold"))+ 
+  theme(axis.title.y = element_text(size =20, vjust =0.2,hjust = 0.5, face ="bold"))+
+  
+  theme(legend.title = element_blank()) +
+  theme(legend.text = element_text(size=18, face ='bold')) +
+  theme(legend.position = c(0.1, 0.92)) 
+
+Cgsites = list()
+for(i in My.Genes){
+  Cgsites[[i]] = strsplit(Accepted_Regions_PhaseIII$Cgsites_In_Regions[match(i, Accepted_Regions_PhaseIII$Gene)], ";")[[1]]
+}
+
+control.idx = which(Anno$Subtype == "Control")
+#N = 1104
+case.idx = which(Anno$Subtype != "Control" & Anno$Subtype != "Adenoma" )
+#N = 54
+adenoma.idx = which(Anno$Subtype == "Adenoma")
+Type = Anno$Subtype
+Type[control.idx] = "Control"
+Type[case.idx] = "CRC"
+Type[adenoma.idx] = "Adenoma"
+
+Figures = list()
+for(i in 1:length(Cgsites)){
+  temp.data = CRC[match(Cgsites[[i]], CRC$ID_REF),]
+  Chr = annotation$CHR[match(Cgsites[[i]], annotation$ID)]
+  Pos = annotation$MAPINFO[match(Cgsites[[i]], annotation$ID)]
+  Gene = rep(names(Cgsites)[i], 6)
+  temp.data = data.frame(Gene, Chr, Pos,temp.data[,-1])
+  temp.data = temp.data %>% gather( key = "Sample", value="Percentage", -Gene, -Chr, - Pos)
+  temp.data = data.frame(Type = rep(Type, each = 6), temp.data)
+  Mean = temp.data%>% group_by(Pos,Type) %>% summarise( Mean = mean(Percentage, na.rm=TRUE))
+  Upper.CI = temp.data %>% group_by(Pos, Type) %>% summarise(CI = t.test(Percentage, na.rm=T)$conf.int[2])
+  Lower.CI = temp.data %>% group_by(Pos, Type) %>% summarise(CI = t.test(Percentage, na.rm=T)$conf.int[1])
+  CI1 = Lower.CI$CI
+  CI2 = Upper.CI$CI
+  temp.plotdata = data.frame(Mean, CI1, CI2)
+  colnames(temp.plotdata) = c("Position", "Type", "Mean", "CI1", "CI2")
+  x.limits = c(min(temp.plotdata$Position)-20, max(temp.plotdata$Position)+20)
+  temp.plotdata$Type = factor(temp.plotdata$Type, levels = c("CRC", "Adenoma", "Control"))
+  
+  Figures[[i]] = ggplot(temp.plotdata, aes(Position, Mean, colour=Type, group=Type)) + 
+      geom_errorbar(aes(ymin= CI1, ymax=CI2), colour="black", width=3,lwd=0.8) +
+      geom_line(lwd=3)+
+      geom_point( size=5, fill="white") + q + 
+      ylab("Mean Methylation Rate")+ xlab("Genomic Coordinates") +
+      scale_y_continuous(limits=c(0, max(temp.plotdata$CI2)+0.1),
+                         breaks=seq(0,max(temp.plotdata$CI2)+0.1, 0.1))+
+      scale_x_continuous(limits=x.limits, 
+                         breaks=seq(min(temp.plotdata$Position), max(temp.plotdata$Position), round((x.limits[2] - x.limits[1])/5) ))+
+      scale_color_nejm()+q + theme(legend.position = c(0.15, 0.90)) 
+    
+  ggsave(Figures[[i]], filename = paste(names(Cgsites)[i], "_discovery_curve",".pdf",sep=""), units = "cm", width = 18, 
+           height = 12,dpi = 300,device = "pdf")
+  }
+
+
+```
+
+
+## The boxplot and scatterplot of the genomic regions using the mean value of each regions as representatives in the discovery stage 
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+
+Cgsites = list()
+for(i in My.Genes){
+  Cgsites[[i]] = strsplit(Accepted_Regions_PhaseIII$Cgsites_In_Regions[match(i, Accepted_Regions_PhaseIII$Gene)], ";")[[1]]
+}
+
+control.idx = which(Anno$Subtype == "Control")
+#N = 1104
+case.idx = which(Anno$Subtype != "Control" & Anno$Subtype != "Adenoma" )
+#N = 54
+adenoma.idx = which(Anno$Subtype == "Adenoma")
+Type = Anno$Subtype
+Type[control.idx] = "Control"
+Type[case.idx] = "CRC"
+Type[adenoma.idx] = "Adenoma"
+
+Figures = list()
+
+for(i in 1:length(Cgsites)){
+  temp.data = CRC[match(Cgsites[[i]], CRC$ID_REF),]
+  Chr = annotation$CHR[match(Cgsites[[i]], annotation$ID)]
+  Pos = annotation$MAPINFO[match(Cgsites[[i]], annotation$ID)]
+  Gene = rep(names(Cgsites)[i], 6)
+  temp.data = data.frame(Gene, Chr, Pos, temp.data[,-1])
+  new.data = CpGsite2Gene_byMean(temp.data)
+  new.data = as.vector(t(new.data[[1]]))[-c(1:3)]
+  data_plot = data.frame(Type, new.data)
+  data_plot$Type = factor(data_plot$Type, levels = c("CRC","Adenoma","Control"))
+  colnames(data_plot)[2] = "Methylation"
+  data_plot$Methylation = as.numeric(as.character(data_plot$Methylation))
+  Figures[[i]] = ggplot(data = data_plot) + geom_boxplot(aes(Type, Methylation),lwd=0.6,fill="white", outlier.shape = NA) + 
+geom_beeswarm(aes(Type, Methylation, colour= Type),size=1, cex=0.8) + q + scale_color_nejm() +  
+                   theme(axis.text.x=element_text(size=15)) +
+                   theme(axis.title.x=element_blank())+ theme(legend.position="none") + 
+                   scale_y_continuous(limits=c(0,1), breaks = seq(0,1,0.2))
+    ggsave(Figures[[i]], filename = paste(names(Cgsites)[i],"_Discovery_Boxplot",".pdf",sep=""), units = "cm", width = 18, height = 12,dpi = 300,device = "pdf")
+}
+```
+
+
+
+
+#The expression profiles of the candidate genes in CRC and control tissues of TCGA
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+#COAD
+Info = read_tsv("unc.edu_COAD.IlluminaHiSeq_RNASeqV2.1.12.0.sdrf.txt")
+RNA_files = list.files()
+SampleID = Info$`Comment [TCGA Barcode]`[match(RNA_files, Info$`Derived Data File`)]
+
+Gene_ID = read.table(RNA_files[1], header=T)$gene_id
+Expression = list()
+
+for(i in 1:length(RNA_files)){
+  Expression[[RNA_files[i]]] = read.table(RNA_files[i], header=T)$normalized_count
+  print(i)
+}
+
+Expression = data.frame(Expression)
+colnames(Expression) = SampleID
+COAD.EXP = data.frame(Gene_ID, Expression)
+write_tsv(COAD.EXP, "COAD_expression.txt")
+
+#READ
+Info = read_tsv("unc.edu_READ.IlluminaHiSeq_RNASeqV2.1.9.0.sdrf.txt")
+RNA_files = list.files()
+SampleID = Info$`Comment [TCGA Barcode]`[match(RNA_files, Info$`Derived Data File`)]
+
+Gene_ID = read.table(RNA_files[1], header=T)$gene_id
+Expression = list()
+
+for(i in 1:length(RNA_files)){
+  Expression[[RNA_files[i]]] = read.table(RNA_files[i], header=T)$normalized_count
+  print(i)
+}
+
+Expression = data.frame(Expression)
+colnames(Expression) = SampleID
+READ.EXP = data.frame(Gene_ID, Expression)
+
+#Combine the expression profiles of COAD and READ (In total, 373 cases and 51 controls were obtained)
+CRC.EXP = data.frame(COAD.EXP, READ.EXP[,-1])
+#Select the samples with "01A" and "11A"
+Type.ID = sapply(colnames(CRC.EXP)[-1], function(x) strsplit(x, "[.]")[[1]][4])
+selected.idx = which(Type.ID %in% c("01A", "11A"))
+Type = Type.ID[selected.idx]
+CRC.EXP = CRC.EXP[,c(1, 1+selected.idx)]
+write_csv(CRC.EXP, path =" CRC.EXP.csv")
+Type = as.vector(t(ifelse(Type == "01A", "CRC", "Control")))
+Genename = sapply(as.character(t(CRC.EXP$Gene_ID)), function(x) strsplit(x, "[|]")[[1]][1])
+
+Expdata = CRC.EXP[match(My.Genes, Genename), ]
+Expdata$Gene_ID = My.Genes
+Expdata = gather(Expdata, key = "SampleID", value ="Expression", -Gene_ID)
+Type.ID = sapply(Expdata$SampleID, function(x) strsplit(x, "[.]")[[1]][4])
+Expdata = data.frame(Expdata, Type.ID)
+Expdata = subset(Expdata, Type.ID %in% c("01A","11A"))
+Type = as.vector(t(ifelse(Expdata$Type.ID == "01A", "CRC", "Control")))
+Expdata = data.frame(Expdata[,-4], Type)
+Expdata$Type = factor(Expdata$Type, levels = c("CRC","Control"))
+#Plot these five genes
+ggplot(data = Expdata,aes(Gene_ID, Expression,fill =Type)) + geom_boxplot(lwd=0.6, outlier.shape = NA) + scale_fill_jama() +q +
+                   theme(axis.text.x=element_text(size=15)) + 
+                   theme(axis.title.x=element_blank())+ theme(legend.position= c(0.15, 0.90)) 
+```
+

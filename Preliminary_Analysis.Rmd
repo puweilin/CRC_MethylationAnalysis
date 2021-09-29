@@ -1,0 +1,236 @@
+---
+title: "Preliminary_Filtering"
+author: "puweilin"
+date: "2019/2/15"
+output: word_document
+---
+
+
+#Including the packages and plot formats for the analysis
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+library(knitr)
+library(ggsci)
+library(ggplot2)
+library(ggthemes)
+library(readxl)
+library(reshape2)
+library(readr)
+library(dplyr)
+library(ggbeeswarm)
+library(gridExtra)
+library(tidyverse)
+library(tidyr)
+library(RColorBrewer)
+library(FactoMineR)
+library(stringi)
+annotation = read_tsv("d:/MyInfo/My_Code/R function//Methylation_Analysis_Pipeline/HM450KAnnotation.txt")
+annotation = arrange(annotation, annotation$CHR, annotation$MAPINFO)
+q =  theme_pander() + 
+  theme(panel.border = element_blank(),
+        axis.line.x = element_line(size = 0.5, linetype = "solid", colour = "black"),
+        axis.line.y = element_line(size = 0.5, linetype = "solid", colour = "black"))+
+  theme(legend.position=c(0.1,0.90))+
+  theme(legend.title = element_blank())+
+  theme(legend.text = element_text(colour="black", size = 16, face = "bold"))+
+  theme(axis.text.x=element_text(size=10))+
+  theme(axis.title.x=element_text(size=15))+
+  theme(axis.text.y=element_text(size=10))+
+  theme(axis.title.y=element_text(size=15))+
+  theme(plot.title = element_text(hjust = 0.5, vjust=0))
+
+```
+
+# Download the genomic coordinates of genes in ZNF family (N =1594)
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+library(biomaRt)
+gene_id = read_tsv("TotalZNFgenes.txt")
+ensembl=useMart("ensembl",dataset="hsapiens_gene_ensembl",host="grch37.ensembl.org")
+hgnc_id = gene_id$`HGNC ID`
+gene_info = getBM(c("hgnc_id", "hgnc_symbol","chromosome_name","start_position","end_position"),
+      filters="hgnc_id", values=hgnc_id, mart=ensembl)
+
+accepted_chrs = c(seq(1,22,1), "X", "Y")
+revised_gene_info = subset(gene_info, chromosome_name %in% accepted_chrs)
+```
+
+
+
+# Filtering the Cgsites located in or near the ZNF family genes. 
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+revised_gene_info$start_position = revised_gene_info$start_position - 1000
+revised_gene_info$end_position = revised_gene_info$end_position + 1000
+
+Accepted_cgsites = list()
+
+for(i in 1:dim(revised_gene_info)[1]){
+  query1 = which(annotation$CHR == revised_gene_info$chromosome_name[i])
+  query2 = which(annotation$MAPINFO >= revised_gene_info$start_position[i])
+  query3 = which(annotation$MAPINFO <= revised_gene_info$end_position[i])
+  query_combine = intersect(intersect(query1, query2), query3)
+  Gene_name = rep(revised_gene_info$hgnc_symbol[i], length(query_combine))
+  Accepted_cgsites[[i]] = data.frame(annotation[query_combine,], Gene = Gene_name)
+  print(i)
+}
+
+Accepted_Cgs = bind_rows(Accepted_cgsites)
+```
+
+
+
+
+
+#Construct the candidate DMR regions of the ZNF genes in CRC dataset (N_sample = 2672)
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+CRC = read_csv("../Integrated Data/Combined_Methyl.csv")
+Anno = read_csv("../Integrated Data/Total_Anno.csv")
+#N = 268
+control.idx = which(Anno$Subtype == "Control")
+#N = 1104
+case.idx = which(Anno$Subtype != "Control" & Anno$Subtype != "Adenoma" )
+#N = 54
+adenoma.idx = which(Anno$Subtype == "Adenoma")
+Accepted_Cgs = subset(Accepted_Cgs, Accepted_Cgs$ID %in% CRC$ID_REF)
+
+MR = list()
+N.regions = 0 
+for(gene in unique(Accepted_Cgs$Gene)){
+  gene_cgs = subset(Accepted_Cgs, Gene == gene)
+  print(gene)
+  if(dim(gene_cgs)[1] <=5){
+    next 
+  }
+  for (i in 1: (dim(gene_cgs)[1] -5)){
+  if((gene_cgs$MAPINFO[i+5] - gene_cgs$MAPINFO[i]) <=1000){
+    N.regions = N.regions + 1
+    MR[[paste(gene, N.regions, sep ="-")]] = gene_cgs$ID[i:(i+5)]
+  }
+  
+    print (i)
+  
+}
+ 
+}
+save(MR, file="MR.RData")
+```
+
+
+
+
+#Firstly, get the methylation status of each region in the combined CRC  dataset (N = 6166)
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+McaM = c()
+McoM = c()
+MadM = c()
+P.value_Case_Control = c()
+P.value_Adenoma_Control = c()
+P.value_Case_Adenoma = c()
+FC = c()
+Diff = c()
+for(i in 1:length(MR)){
+ 
+    temp = data.matrix(CRC[na.omit(match(MR[[i]], CRC$ID_REF)),-1])
+    Avg.methyl = as.vector(t(apply(temp, 2, function(x) mean(x, na.rm=T))))
+    McaM[i] = mean(Avg.methyl[case.idx], na.rm = T)
+    McoM[i] = mean(Avg.methyl[control.idx], na.rm = T)
+    MadM[i] = mean(Avg.methyl[adenoma.idx], na.rm = T)
+    P.value_Case_Control[i] = wilcox.test(Avg.methyl[case.idx], Avg.methyl[control.idx], na.rm = T)$p.value
+    P.value_Adenoma_Control[i] = wilcox.test(Avg.methyl[adenoma.idx], Avg.methyl[control.idx], na.rm = T)$p.value
+    P.value_Case_Adenoma[i] = wilcox.test(Avg.methyl[case.idx], Avg.methyl[adenoma.idx], na.rm = T)$p.value
+    FC[i] = McaM[i] / McoM[i] 
+    Diff[i] = McaM[i] - McoM[i]
+    if(i %% 100 == 0 ){
+      print (i)
+    }
+  
+  }
+
+CpG1 = unlist(lapply(MR, function(x) x[1]))
+CpG2 = unlist(lapply(MR, function(x) x[6]))
+Chr = Accepted_Cgs$CHR[match(CpG1, Accepted_Cgs$ID)]
+Start = Accepted_Cgs$MAPINFO[match(CpG1, Accepted_Cgs$ID)]
+End = Accepted_Cgs$MAPINFO[match(CpG2, Accepted_Cgs$ID)]
+Island = paste(Accepted_Cgs$Relation_to_UCSC_CpG_Island[match(CpG1, Accepted_Cgs$ID)], Accepted_Cgs$Relation_to_UCSC_CpG_Island[match(CpG2, Accepted_Cgs$ID)], sep ="-")
+Gene = sapply(names(MR), function(x) strsplit(x, "-")[[1]][1])
+
+FDR_Case_Control= p.adjust(P.value_Case_Control, method = "fdr")
+FDR_Adenoma_Control= p.adjust(P.value_Adenoma_Control, method = "fdr")
+FDR_Case_Adenoma= p.adjust(P.value_Case_Adenoma, method ="fdr")
+Cgsites_In_Regions = unlist(lapply(MR, function(x) paste(x, collapse = ";")))
+CRC_Results = data.frame(Cgsites_In_Regions, Gene, Chr, Start,End, Island,McaM, MadM,McoM, P.value_Case_Control, FDR_Case_Control, P.value_Adenoma_Control, FDR_Adenoma_Control, P.value_Case_Adenoma, FDR_Case_Adenoma, FC, Diff)
+write_csv(CRC_Results, path="CRC_Regions_Results.csv")
+```
+
+
+#Set the criteria for all the DMRs, here we selected 173 candidates (N = 11 )
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+#Cutoffs
+Accepted_Regions = subset(CRC_Results, McaM > 0.50 & McoM < 0.30 ) # (N = 89)
+Accepted_Regions = subset(Accepted_Regions, MadM > 0.50 ) # (N = 85)
+
+#Get the methylation profiles of these regions in PBMC and PBL (N = 32 )
+PBMC = read_rds("d:/Public_Data/PBMC.rds")
+PBL = read_rds("d:/Public_Data/PBL.rds")
+WB = read_rds("d:/Public_Data/WB.rds")
+PBMC.Mean = c()
+PBL.Mean = c()
+WB.Mean = c()
+
+for(i in 1:dim(Accepted_Regions)[1]){
+  sites = strsplit(as.character(Accepted_Regions[i,1]), ";")[[1]]
+  temp.PBMC = PBMC[na.omit(match(sites, PBMC$Gene)), -c(1:3)]
+  PBMC.Mean = append(PBMC.Mean, format(mean(rowMeans(temp.PBMC, na.rm = T), na.rm = T), digits = 2))
+  temp.PBL = PBL[na.omit(match(sites, PBL$Gene)), -c(1:3)]
+  PBL.Mean = append(PBL.Mean, format(mean(rowMeans(temp.PBL, na.rm=T), na.rm = T), digits = 2))
+  temp.WB = WB[na.omit(match(sites, WB$Gene)), -c(1:3)]
+  WB.Mean = append(WB.Mean, format(mean(rowMeans(temp.WB, na.rm=T), na.rm=T), digits = 2))
+  print(i)
+}
+PBMC.Mean = as.numeric(as.character(PBMC.Mean))
+PBL.Mean = as.numeric(as.character(PBL.Mean))
+WB.Mean = as.numeric(as.character(WB.Mean))
+
+Accepted_Regions = data.frame(Accepted_Regions, PBMC.Mean, PBL.Mean, WB.Mean)
+
+Accepted_Regions = subset(Accepted_Regions, PBMC.Mean <= 0.10 & PBL.Mean <= 0.10 & WB.Mean <=0.10)
+
+#Select the best region(minium p.value or the largest McaM) in each gene if there were multiple candidate regions (N = 10 )
+
+uniqRegions = na.omit(unique(Accepted_Regions$Gene))
+idx = c()
+for(i in 1:length(uniqRegions)){
+  temp.idx = seq(1, dim(Accepted_Regions)[1], 1)[which(Accepted_Regions$Gene %in% uniqRegions[i])]
+  temp = Accepted_Regions[temp.idx,]
+  if(length(temp.idx) == 1){
+    idx = append(idx, temp.idx)
+  }else{
+  idx = append(idx,   temp.idx[order(temp$P.value_Case_Control)][1])
+  }
+  print(i)
+}
+
+Accepted_Regions = Accepted_Regions[idx,]
+write.csv(Accepted_Regions, file="Accepted_Regions_PhaseI.csv")
+```
+
+# Using the TFBS database for Phase II filtering (N = 10 )
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+Accepted_Regions = read_csv("Accepted_Regions_PhaseI.csv")
+TFBS = read_csv("TFBS_Result.csv")
+Accepted_Regions$ID = paste(paste("chr", Accepted_Regions$Chr, sep=""), paste(Accepted_Regions$Start, Accepted_Regions$End, sep="-"), sep=":")
+
+Accepted_Regions_PhaseII = subset(Accepted_Regions, ID %in% TFBS$Targeted_Regions)
+write_csv(Accepted_Regions_PhaseII, path="Accepted_Regions_PhaseII.csv")
+```
+
+
+# Using the expression profiles of these targeted genes in the TCGA database for PhaseIII filtering (N = 7)
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+Expression = read_csv("Expression_Diff.csv")
+Expression_Targeted_Genes = Expression[match(Accepted_Regions_PhaseII$Gene, Expression$Gene),]
+Expression_Targeted_Genes = subset(Expression_Targeted_Genes, FC < 0.5 & FDR <= 0.05 & Control.Mean > 10)
+Accepted_Regions_PhaseIII = subset(Accepted_Regions_PhaseII, Gene %in%  Expression_Targeted_Genes$Gene)
+write_csv(Accepted_Regions_PhaseIII, path="Accepted_Regions_PhaseIII.csv")
+```
+
+# Removing the SALL1 and ZSCAN23 gene due to the design failure 
+

@@ -1,0 +1,435 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#Including the packages and plot formats for the analysis
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+library(knitr)
+library(ggsci)
+library(ggplot2)
+library(ggthemes)
+library(readxl)
+library(reshape2)
+library(readr)
+library(dplyr)
+library(ggbeeswarm)
+library(gridExtra)
+library(tidyverse)
+library(tidyr)
+library(RColorBrewer)
+library(FactoMineR)
+library(stringi)
+annotation = read_tsv("d:/MyInfo/My_Code/R function//Methylation_Analysis_Pipeline/HM450KAnnotation.txt")
+annotation = arrange(annotation, annotation$CHR, annotation$MAPINFO)
+q =  theme_pander() + 
+  theme(panel.border = element_blank(),
+        axis.line.x = element_line(size = 0.5, linetype = "solid", colour = "black"),
+        axis.line.y = element_line(size = 0.5, linetype = "solid", colour = "black"))+
+  theme(legend.position=c(0.1,0.90))+
+  theme(legend.title = element_blank())+
+  theme(legend.text = element_text(colour="black", size = 16, face = "bold"))+
+  theme(axis.text.x=element_text(size=10))+
+  theme(axis.title.x=element_text(size=15))+
+  theme(axis.text.y=element_text(size=10))+
+  theme(axis.title.y=element_text(size=15))+
+  theme(plot.title = element_text(hjust = 0.5, vjust=0))
+
+```
+
+
+# Exploring the methylation profiles of these 6 regions in the validation datasets
+
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+load("MethyTable.CG.RData")
+Methy.Info = data.frame(Sample = MethyTable.CG$Sample, Gene = MethyTable.CG$Gene, 
+                        Chr =MethyTable.CG$CHR, Pos = MethyTable.CG$POS, MethylReads = MethyTable.CG$MethylReads,
+                        TotalReads = MethyTable.CG$TotalReads, Percentage = MethyTable.CG$MethylRatio)
+Methy.Table = spread(Methy.Info[,-c(5:6)], Sample, Percentage)
+save(Methy.Table, file ="Methy.Table.RData")
+
+```
+
+
+#Remove the samples with high missing rates.
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+#We found that A007 and A205, A025, A041, which are the CRC tumor tissues, with high missing rate > 10%, and thus was removed.
+Filtered.Methy.Table= Methy.Table[, c(-10, -26, -41, -186)]
+sampletype = ifelse(sapply(colnames(Filtered.Methy.Table)[-c(1:3)], function(x) as.numeric(strsplit(x, 'A')[[1]][2])) %% 2 == 0, "N", "T")
+colnames(Filtered.Methy.Table)[-c(1:3)] = paste(sampletype, colnames(Filtered.Methy.Table)[-c(1:3)], sep= "-")
+
+SEPT9.Table = subset(Filtered.Methy.Table, Gene == 'SEPT-9')
+Filtered.Methy.Table = subset(Filtered.Methy.Table, !(Gene %in% c("SEPT-9")) )
+save(Filtered.Methy.Table, file = 'Filtered.Methy.Table.RData')
+save(SEPT9.Table, file ="SEPT9.Table.RData")
+```
+
+
+
+## The main figures in the study. 
+
+
+## PCA analysis with all the variables and the samples after filtering
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+load("Filtered.Methy.Table.RData")
+pca.data = as.data.frame(t(Filtered.Methy.Table[,-c(1:3)]))
+#pca.data = scale(pca.data)
+colnames(pca.data) = paste(Filtered.Methy.Table$Gene, Filtered.Methy.Table$Pos, sep="-")
+pca1 =PCA(pca.data,graph=FALSE)
+scores = as.data.frame(pca1$ind$coord)
+colnames(scores)[1:5]=c("PC1","PC2","PC3","PC4","PC5")
+SampleID = rownames(scores)
+Type = sapply(SampleID, function(x){return(substr(x,1,1))})
+Type = ifelse(Type =="N", "Control", "CRC")
+data.plot = data.frame(Type, SampleID, scores[,1:2])
+#Create Figures
+ggplot(data.plot, aes(PC1, PC2)) + geom_point(aes(colour = Type),size=6) +  
+  theme_classic() +
+  theme(axis.line.y = element_line(size = 0.8,color = "black"))+ 
+  theme(axis.line.x = element_line(size = 0.8,color = "black"))+
+    
+  theme(axis.text.x=element_text(size = 18, face ="bold"))+ 
+  theme(axis.title.x = element_blank())+
+    
+  theme(axis.text.y=element_text(size = 18, face ="bold"))+ 
+  theme(axis.title.y = element_text(size =20, vjust =0.2,hjust = 0.5, face ="bold"))+
+  
+  theme(legend.title = element_blank()) +
+  theme(legend.text = element_text(size=18, face ='bold')) +
+  theme(legend.position = c(0.1, 0.92)) 
+```
+
+
+## Heatmap Analysis with all the variables and the samples after filtering
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+library(circlize)
+library(ComplexHeatmap)
+load("Filtered.Methy.Table.RData")
+SampleID = sapply(colnames(Filtered.Methy.Table)[-c(1:3)], function(x) as.numeric(strsplit(x, 'A')[[1]][2]))
+Type = ifelse(SampleID %% 2 ==0, "Control","CRC")
+
+plot.data = as.matrix(Filtered.Methy.Table[,-c(1:3)])
+cgname = paste(Filtered.Methy.Table$Gene, Filtered.Methy.Table$Pos, sep="-")
+rownames(plot.data) = cgname
+
+#Heatmap.1
+ha = HeatmapAnnotation(df = data.frame(type = Type), col = list(type = c("CRC" =  "mediumpurple2", "Control" = "mediumaquamarine")))
+
+hb = rowAnnotation(df = data.frame(type = Filtered.Methy.Table$Gene), col = list(type = c("ZNF132" =  "burlywood4", "ZNF229" = "olivedrab3", "ZNF542" = "chocolate", "ZNF677" = "lightsteelblue4", "ESR1" = "aquamarine")))
+
+clinical = read_excel("Clinical.xlsx")
+KRAS_status =c()
+sampleid = sapply(colnames(plot.data), function(x) strsplit(x, "-")[[1]][2])
+for(sample in sampleid){
+  if(sample %in% clinical$No){
+    KRAS_status = append(KRAS_status, clinical$KRAS_status[match(sample, clinical$No)])
+  }else{
+    KRAS_status = append(KRAS_status, "Control")
+  }
+}
+hc = HeatmapAnnotation(df = data.frame(type = KRAS_status), col = list(type = c("KRAS_mutant" =  "firebrick1", "Control" = "lightseagreen", "Neg" = "black", "NA" = "grey")))
+
+Heatmap(plot.data,  col =rev(brewer.pal(9,"RdYlBu")),
+    top_annotation = ha, top_annotation_height = unit(4, "mm"), 
+    show_row_names = FALSE, show_column_names = FALSE) + hb
+
+```
+
+
+
+## The methylation curve of the genomic regions in the validation dataset
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+My.Methy.Table = Filtered.Methy.Table
+load("SEPT9.Table.RData")
+source("MethylCurve.R")
+N.genes = length(unique(My.Methy.Table$Gene))
+MethylCurve(My.Methy.Table, control.name = "Control", case.name = "CRC", return.value = T, 
+            legend.x = rep(0.15, N.genes), legend.y = rep(0.95, N.genes),error.bar = "CI")
+
+MethylCurve(SEPT9.Table, control.name = "Control", case.name = "CRC", return.value = T, 
+            legend.x = rep(0.15, 1), legend.y = rep(0.95, 1),error.bar = "CI")
+
+```
+
+
+
+## The boxplot and scatterplot of the genomic regions using the mean value of each regions as representatives
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+source("MethylationBoxplot.R")
+source("CpGsite2Gene_byMean.R")
+My.Genes = as.vector(t(unique(My.Methy.Table$Gene)))
+MethylationBoxplot(data = My.Methy.Table, Selected.Genes = My.Genes, case.name = "CRC", control.name = "Control", CpGsite2Gene_method = CpGsite2Gene_byMean, return.value = T)
+
+MethylationBoxplot(data = SEPT9.Table, Selected.Genes = "SEPT-9", case.name = "CRC", control.name = "Control", CpGsite2Gene_method = CpGsite2Gene_byMean, return.value = T)
+
+```
+
+
+## The ROC curve for the logistic regression model
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+source("MethylationBoxplot.R")
+source("CpGsite2Gene_byMean.R")
+My.Genes = as.vector(t(unique(My.Methy.Table$Gene)))
+ROCcurve(data = My.Methy.Table, Selected.Genes = My.Genes, CpGsite2Gene_method = CpGsite2Gene_byMean, return.value = T)
+ROCcurve(data = SEPT9.Table,Selected.Genes = "SEPT-9", CpGsite2Gene_method = CpGsite2Gene_byMean, return.value = T)
+Total.Table = rbind(My.Methy.Table, SEPT9.Table)
+```
+
+
+##The methylation status of these five genomic regions in validation dataset
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+source("MethylationStatus.R")
+source("CpGsite2Gene_byMean.R")
+MethylationStatus(My.Methy.Table, Selected.Genes = My.Genes, output_name = "Validation_6_Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+MethylationStatus(SEPT9.Table, Selected.Genes = "SEPT-9", output_name = "SEPT-9_Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+
+## Machine learning for all the biomarkers. 
+
+## The diagnosis sensitivity, specificity, accuracy of the five biomarkers through machine learning methods
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+source("ML_classfiers_Table.R")
+
+ML_classfiers_Table(My.Methy.Table,Selected.Genes = unique(My.Methy.Table$Gene), table.name = "MLTable_Validation_5Regions", CpGsite2Gene_method = CpGsite2Gene_byMean, N = 1000)
+```
+
+
+
+
+
+### Subgroup Analysis
+
+
+## The diagnostic ability of these ZFGs in Young and Old subgroup
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+clinical = read_excel("Clinical.xlsx")
+Age_median = median(clinical$Age)
+
+samples_old_case = clinical$No[which(clinical$Age >= Age_median)]
+samples_young_case = clinical$No[which(clinical$Age < Age_median)]
+samples_old_control = paste("A", sprintf("%03d",as.numeric(sapply(samples_old_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+samples_young_control =  paste("A", sprintf("%03d",as.numeric(sapply(samples_young_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+
+samples_old = c(samples_old_case, samples_old_control)
+samples_young = c(samples_young_case, samples_young_control)
+
+SampleID = sapply(colnames(My.Methy.Table), function(x) strsplit(x, "-")[[1]][2])
+My.Methy.Table.Old = My.Methy.Table[, c(1:3, which(SampleID %in% samples_old))]
+My.Methy.Table.Young = My.Methy.Table[, c(1:3, which(SampleID %in% samples_young))]
+
+MethylationStatus(My.Methy.Table.Young, Selected.Genes = My.Genes, output_name = "Young_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+MethylationStatus(My.Methy.Table.Old, Selected.Genes = My.Genes, output_name = "Old_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+## Subgroup Comparison: Young vs. Old
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+source("Subgroup_Compare.R")
+clinical = read_excel("Clinical.xlsx")
+Age_median = median(clinical$Age)
+
+samples_old_case = clinical$No[which(clinical$Age >= Age_median)]
+samples_young_case = clinical$No[which(clinical$Age < Age_median)]
+samples_old_control = paste("A", sprintf("%03d",as.numeric(sapply(samples_old_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+samples_young_control =  paste("A", sprintf("%03d",as.numeric(sapply(samples_young_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+
+samples_old = c(samples_old_case, samples_old_control)
+samples_young = c(samples_young_case, samples_young_control)
+
+SampleGroup = data.frame(SampleID = c(samples_old, samples_young), 
+                         Group = c(rep("Old", length(samples_old)), rep("Young", length(samples_young))))
+
+Subgroup_Compare(My.Methy.Table, SampleGroup = SampleGroup, Selected.Genes = My.Genes, output_name = "Young_vs_Old", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+
+
+## The diagnostic ability of these ZFGs in Male and Female subgroup
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+samples_male_case = clinical$No[which(clinical$Gender == "Male")]
+samples_female_case = clinical$No[which(clinical$Gender == "Female")]
+samples_male_control = paste("A", sprintf("%03d",as.numeric(sapply(samples_male_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+samples_female_control =  paste("A", sprintf("%03d",as.numeric(sapply(samples_female_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+
+samples_male = c(samples_male_case, samples_male_control)
+samples_female = c(samples_female_case, samples_female_control)
+
+SampleID = sapply(colnames(My.Methy.Table), function(x) strsplit(x, "-")[[1]][2])
+My.Methy.Table.Male = My.Methy.Table[, c(1:3, which(SampleID %in% samples_male))]
+My.Methy.Table.Female = My.Methy.Table[, c(1:3, which(SampleID %in% samples_female))]
+
+MethylationStatus(My.Methy.Table.Male, Selected.Genes = My.Genes, output_name = "Male_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+MethylationStatus(My.Methy.Table.Female, Selected.Genes = My.Genes, output_name = "Female_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+## Subgroup Comparison: Male vs. Female;
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+source("Subgroup_Compare.R")
+clinical = read_excel("Clinical.xlsx")
+samples_male_case = clinical$No[which(clinical$Gender == "Male")]
+samples_female_case = clinical$No[which(clinical$Gender == "Female")]
+samples_male_control = paste("A", sprintf("%03d",as.numeric(sapply(samples_male_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+samples_female_control =  paste("A", sprintf("%03d",as.numeric(sapply(samples_female_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+
+samples_male = c(samples_male_case, samples_male_control)
+samples_female = c(samples_female_case, samples_female_control)
+
+SampleGroup = data.frame(SampleID = c(samples_male, samples_female), 
+                         Group = c(rep("Male", length(samples_male)), rep("Female", length(samples_female))))
+
+Subgroup_Compare(My.Methy.Table, SampleGroup = SampleGroup, Selected.Genes = My.Genes, output_name = "Male_vs_Female", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+
+## The diagnostic ability of these ZFGs in KRAS+ and KRAS- subgroup
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+samples_KRASmut_case = clinical$No[which(clinical$KRAS_status == "KRAS_mutant")]
+samples_KRASwld_case = clinical$No[which(clinical$KRAS_status == "Neg")]
+samples_KRASmut_control = paste("A", sprintf("%03d",as.numeric(sapply(samples_KRASmut_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+samples_KRASwld_control =  paste("A", sprintf("%03d",as.numeric(sapply(samples_KRASwld_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+
+samples_KRASmut = c(samples_KRASmut_case, samples_KRASmut_control)
+samples_KRASwld = c(samples_KRASwld_case, samples_KRASwld_control)
+
+SampleID = sapply(colnames(My.Methy.Table), function(x) strsplit(x, "-")[[1]][2])
+My.Methy.Table.KRASmut = My.Methy.Table[, c(1:3, which(SampleID %in% samples_KRASmut))]
+My.Methy.Table.KRASwld = My.Methy.Table[, c(1:3, which(SampleID %in% samples_KRASwld))]
+
+SEPT9.Table.KRASmut = SEPT9.Table[, c(1:3, which(SampleID %in% samples_KRASmut))]
+SEPT9.Table.KRASwld = SEPT9.Table[, c(1:3, which(SampleID %in% samples_KRASwld))]
+
+MethylationStatus(My.Methy.Table.KRASmut, Selected.Genes = My.Genes, output_name = "KRASmut_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+MethylationStatus(My.Methy.Table.KRASwld, Selected.Genes = My.Genes, output_name = "KRASwld_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+MethylationStatus(SEPT9.Table.KRASmut, Selected.Genes = "SEPT-9", output_name = "KRASmut_sept9_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+MethylationStatus(SEPT9.Table.KRASwld, Selected.Genes = "SEPT-9", output_name = "KRASwld_sept9_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+## Subgroup Comparison: KRAS+ vs. KRAS-;
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+source("Subgroup_Compare.R")
+clinical = read_excel("Clinical.xlsx")
+
+samples_KRASmut_case = clinical$No[which(clinical$KRAS_status == "KRAS_mutant")]
+samples_KRASwld_case = clinical$No[which(clinical$KRAS_status == "Neg")]
+samples_KRASmut_control = paste("A", sprintf("%03d",as.numeric(sapply(samples_KRASmut_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+samples_KRASwld_control =  paste("A", sprintf("%03d",as.numeric(sapply(samples_KRASwld_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+
+samples_KRASmut = c(samples_KRASmut_case, samples_KRASmut_control)
+samples_KRASwld = c(samples_KRASwld_case, samples_KRASwld_control)
+
+SampleGroup = data.frame(SampleID = c(samples_KRASmut, samples_KRASwld), 
+                         Group = c(rep("KRAS+", length(samples_KRASmut)), rep("KRAS-", length(samples_KRASwld))))
+
+Subgroup_Compare(My.Methy.Table, SampleGroup = SampleGroup, Selected.Genes = My.Genes, output_name = "KRASmut_vs_KRASwild", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+
+## The diagnostic ability of these ZFGs in the Early and Late stages
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+samples_early_case = clinical$No[which(clinical$UICC_Stages %in% c("I", "II"))]
+samples_late_case = clinical$No[which(clinical$UICC_Stages %in% c("III", "IV"))]
+samples_early_control = paste("A", sprintf("%03d",as.numeric(sapply(samples_early_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+samples_late_control =  paste("A", sprintf("%03d",as.numeric(sapply(samples_late_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+
+samples_early = c(samples_early_case, samples_early_control)
+samples_late = c(samples_late_case, samples_late_control)
+
+SampleID = sapply(colnames(My.Methy.Table), function(x) strsplit(x, "-")[[1]][2])
+My.Methy.Table.Early = My.Methy.Table[, c(1:3, which(SampleID %in% samples_early))]
+My.Methy.Table.Late = My.Methy.Table[, c(1:3, which(SampleID %in% samples_late))]
+
+MethylationStatus(My.Methy.Table.Early, Selected.Genes = My.Genes, output_name = "Early_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+MethylationStatus(My.Methy.Table.Late, Selected.Genes = My.Genes, output_name = "Late_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+## Subgroup Comparison: Early vs. Late;
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+source("Subgroup_Compare.R")
+clinical = read_excel("Clinical.xlsx")
+samples_early_case = clinical$No[which(clinical$UICC_Stages %in% c("I", "II"))]
+samples_late_case = clinical$No[which(clinical$UICC_Stages %in% c("III", "IV"))]
+samples_early_control = paste("A", sprintf("%03d",as.numeric(sapply(samples_early_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+samples_late_control =  paste("A", sprintf("%03d",as.numeric(sapply(samples_late_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+
+samples_early = c(samples_early_case, samples_early_control)
+samples_late = c(samples_late_case, samples_late_control)
+
+SampleGroup = data.frame(SampleID = c(samples_early, samples_late), 
+                         Group = c(rep("Early", length(samples_early)), rep("Late", length(samples_late))))
+
+Subgroup_Compare(My.Methy.Table, SampleGroup = SampleGroup, Selected.Genes = My.Genes, output_name = "Early_vs_Late", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+
+## The diagnostic ability of these ZFGs in the Colon and Rectum
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+samples_Colon_case = clinical$No[which(clinical$Subtype == "Colon")]
+samples_Rectal_case = clinical$No[which(clinical$Subtype == "Rectum")]
+
+samples_Colon_control = paste("A", sprintf("%03d",as.numeric(sapply(samples_Colon_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+samples_Rectal_control =  paste("A", sprintf("%03d",as.numeric(sapply(samples_Rectal_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+
+samples_Colon = c(samples_Colon_case, samples_Colon_control)
+samples_Rectal = c(samples_Rectal_case, samples_Rectal_control)
+
+SampleID = sapply(colnames(My.Methy.Table), function(x) strsplit(x, "-")[[1]][2])
+My.Methy.Table.Colon = My.Methy.Table[, c(1:3, which(SampleID %in% samples_Colon))]
+My.Methy.Table.Rectal = My.Methy.Table[, c(1:3, which(SampleID %in% samples_Rectal))]
+
+MethylationStatus(My.Methy.Table.Colon, Selected.Genes = My.Genes, output_name = "Colon_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+MethylationStatus(My.Methy.Table.Rectal, Selected.Genes = My.Genes, output_name = "Rectal_5Regions_MethylationStatus", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
+#Subgroup Comparison: Colon vs. Rectum;
+```{r, echo =FALSE, warning=FALSE, message=FALSE,fig.height=8, fig.width=12}
+source("Subgroup_Compare.R")
+clinical = read_excel("Clinical.xlsx")
+samples_Colon_case = clinical$No[which(clinical$Subtype == "Colon")]
+samples_Rectal_case = clinical$No[which(clinical$Subtype == "Rectum")]
+
+samples_Colon_control = paste("A", sprintf("%03d",as.numeric(sapply(samples_Colon_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+samples_Rectal_control =  paste("A", sprintf("%03d",as.numeric(sapply(samples_Rectal_case, function(x) strsplit(x, "A")[[1]][2])) + 1), sep="")
+
+samples_Colon = c(samples_Colon_case, samples_Colon_control)
+samples_Rectal = c(samples_Rectal_case, samples_Rectal_control)
+
+SampleGroup = data.frame(SampleID = c(samples_Colon, samples_Rectal), 
+                         Group = c(rep("Colon", length(samples_Colon)), rep("Rectum", length(samples_Rectal))))
+
+Subgroup_Compare(My.Methy.Table, SampleGroup = SampleGroup, Selected.Genes = My.Genes, output_name = "Colon_vs_Rectum", CpGsite2Gene_method = CpGsite2Gene_byMean)
+
+```
+
+
